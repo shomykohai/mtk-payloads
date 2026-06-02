@@ -109,8 +109,9 @@ void sej_init(uintptr_t base_addr) {
 
     memset(&g_sej_ctx, 0, sizeof(g_sej_ctx));
 
-    memcpy(g_sej_ctx.sw_key, DEFAULT_KEY, SEJ_AES_MAX_KEY_SZ);
-    memcpy(iv.vector, DEFAULT_IV, AES_CFG_SZ);
+    sej_prng(NULL, (u32 *)g_sej_ctx.sw_key);
+    sej_prng((u32 *)g_sej_ctx.sw_key, (u32 *)(g_sej_ctx.sw_key + 16));
+    sej_prng((u32 *)(g_sej_ctx.sw_key + 16), (u32 *)iv.vector);
 
     sej_set_iv(&iv);
     g_sej_ctx.blk_sz = AES_BLK_SZ;
