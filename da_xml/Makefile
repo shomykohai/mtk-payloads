@@ -9,7 +9,7 @@ CC_ARM64      := $(CROSS_COMPILE_64)gcc
 OBJCOPY_ARM64 := $(CROSS_COMPILE_64)objcopy
 SIZE_ARM64    := $(CROSS_COMPILE_64)size
 
-FEATURES   := uart xml crypto rpmb mmc mmc_rpmb crypto_ssr
+FEATURES   := uart xml crypto rpmb mmc mmc_rpmb ufs_rpmb crypto_ssr
 COMMON_DIR := ../common
 
 

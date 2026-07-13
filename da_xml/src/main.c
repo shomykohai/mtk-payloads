@@ -20,6 +20,10 @@ volatile pointer_table_t PTR_TABLE = {
     .malloc                 = 0x00000000,
     .free                   = 0x00000000,
     .mmc_get_card           = 0x00000000,
+    .ufs_get_lu             = 0x00000000,
+    .ufs_get_tag            = 0x00000000,
+    .ufs_queuecommand       = 0x00000000,
+    .ufs_put_tag            = 0x00000000,
 };
 
 u32 init_pointers(void) {
@@ -32,6 +36,10 @@ u32 init_pointers(void) {
     malloc                  = (void *)(uptr)PTR_TABLE.malloc;
     free                    = (void *)(uptr)PTR_TABLE.free;
     mmc_get_card            = (void *)(uptr)PTR_TABLE.mmc_get_card;
+    ufs_get_lu              = (void *)(uptr)PTR_TABLE.ufs_get_lu;
+    ufs_get_tag             = (void *)(uptr)PTR_TABLE.ufs_get_tag;
+    ufs_queuecommand        = (void *)(uptr)PTR_TABLE.ufs_queuecommand;
+    ufs_put_tag             = (void *)(uptr)PTR_TABLE.ufs_put_tag;
 
     return 0;
 }

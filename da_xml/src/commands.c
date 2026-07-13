@@ -13,6 +13,7 @@
 #include <crypto/key_derive.h>
 #include <security/rpmb.h>
 #include <storage/mmc/rpmb_mmc.h>
+#include <storage/ufs/rpmb_ufs.h>
 #include <da.h>
 #include <protocol_functions.h>
 #include <commands.h>
@@ -26,7 +27,8 @@
 
 volatile da_ctx_t g_da_ctx;
 
-int cmd_ack(struct com_channel_struct *channel, const char*) {
+int cmd_ack(struct com_channel_struct *channel, const char *xml) {
+    (void)xml;
     int status = STATUS_OK;
     const char *target_file = "ack.xml";
     char ack_xml[512];
@@ -92,9 +94,14 @@ int cmd_da_ctx(struct com_channel_struct *channel, const char* xml) {
     printf("TZCC base: 0x%08" PRIx32 "\n", tzcc_base);
 
     storage_type storage_type_enum;
-    if (strncmp(storage, "EMMC", 4) == 0) {   printf("Storage type: eMMC\n");
+    if (strncmp(storage, "EMMC", 4) == 0) {
+        printf("Storage type: eMMC\n");
         storage_type_enum = STORAGE_EMMC;
         rpmb_mmc_setup(mmc_get_card);
+    } else if (strncmp(storage, "UFS", 3) == 0) {
+        printf("Storage type: UFS\n");
+        storage_type_enum = STORAGE_UFS;
+        rpmb_ufs_setup(ufs_get_lu, ufs_get_tag, ufs_queuecommand, ufs_put_tag);
     } else {
         printf("Unsupported storage type in DA context: %s\n", storage);
         storage_type_enum = STORAGE_UNKNOWN;
@@ -246,6 +253,11 @@ int cmd_key_derive(struct com_channel_struct *channel, const char *xml) {
 
 
     status = key_derive(type, key, key_length);
+    if (status != STATUS_OK) {
+        printf("Key Derive failed with status=0x%08x\n", status);
+        status = STATUS_ERR;
+        goto end;
+    }
 
     bytes_to_hex(key, key_length, key_hex);
 

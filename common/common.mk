@@ -11,6 +11,7 @@
 #   rpmb       - RPMB
 #   mmc        - MMC driver
 #   mmc_rpmb   - MMC RPMB driver
+#   ufs_rpmb   - UFS RPMB driver using DA-provided UFS helpers
 
 COMMON_DIR ?= ../common
 
@@ -102,6 +103,16 @@ COMMON_CFLAGS += -Dmmc_rpmb
 O3_SRCS       += $(COMMON_DIR)/storage/mmc/rpmb_mmc.c
 endif
 
+ifneq ($(filter ufs_rpmb,$(FEATURES)),)
+ifeq ($(filter rpmb,$(FEATURES)),)
+$(error ufs_rpmb requires rpmb)
+endif
+
+COMMON_SRCS   += $(COMMON_DIR)/storage/ufs/rpmb_ufs.c
+COMMON_CFLAGS += -Dufs_rpmb
+O3_SRCS       += $(COMMON_DIR)/storage/ufs/rpmb_ufs.c
+endif
+
 ifneq ($(filter xml,$(FEATURES)),)
 COMMON_SRCS   += $(XML_SRCS)
 COMMON_CFLAGS += -Dxml_parser
@@ -121,7 +132,11 @@ COMMON_CFLAGS += \
 
 COMMON_LDFLAGS ?= \
 	-nodefaultlibs -nostdlib \
-	-Wl,--build-id=none,--no-warn-rwx-segments
+	-Wl,--build-id=none
+
+ifneq ($(shell $(CC) -Wl,--help 2>/dev/null | grep -q -- --no-warn-rwx-segments && echo yes),)
+COMMON_LDFLAGS += -Wl,--no-warn-rwx-segments
+endif
 
 
 # For some files we want to use -O3 for faster performance (mainly storage drivers
