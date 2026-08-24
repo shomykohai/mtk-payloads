@@ -292,7 +292,7 @@ int cmd_rpmb_init(com_channel_struct *channel) {
 
 out:
     channel->write((u8*)&status, status_len);
-    return 0;
+    return status;
 }
 
 int cmd_rpmb_read(com_channel_struct *channel) {
