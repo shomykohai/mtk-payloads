@@ -71,6 +71,7 @@ static int rpmb_mmc_init(uint32_t part, uint8_t *rpmb_key) {
     g_rpmb_initialized = res == 0;
 
 out:
+    mmc_switch_part(&g_mmc, MMC_PART_USER);
     return res;
 }
 
@@ -409,6 +410,7 @@ static int rpmb_mmc_program_key(uint32_t part, const uint8_t *rpmb_key) {
         printf("[RPMB] %s: result=%d\n", __func__, res);
 
 out:
+    mmc_switch_part(&g_mmc, MMC_PART_USER);
     return res;
 }
 
