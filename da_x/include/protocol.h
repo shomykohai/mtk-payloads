@@ -10,6 +10,7 @@
 #include <types.h>
 #include <stream.h>
 
+#define FACILITY_LIBRARY    0x3
 #define FACILITY_EXTENSIONS 0xE
 
 #define SEV_SUCCESS 	(0 << 30)
@@ -20,6 +21,8 @@
 #define MAKE_CODE(sev, fac, code) ((sev) | (fac << 16) | (code))
 
 #define STATUS_OK (0x00000000)
+
+#define STATUS_INVALID_PARAMETERS           (MAKE_CODE(SEV_ERROR, FACILITY_LIBRARY, 0x07))
 
 #define STATUS_DOWNLOAD_ACK_NOT_OK          (MAKE_CODE(SEV_ERROR, FACILITY_EXTENSIONS, 0x01))
 #define STATUS_UPLOAD_ACK_NOT_OK            (MAKE_CODE(SEV_ERROR, FACILITY_EXTENSIONS, 0x02))

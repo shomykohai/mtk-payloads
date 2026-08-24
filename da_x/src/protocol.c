@@ -60,6 +60,11 @@ int download_data(com_channel_struct* channel, u8** dst, u64 size, const char* d
     u32 ack_length = 4;
     u32 checksum = 0;
 
+    if (size == 0) {
+        printf("Length of %s download is invalid (%d bytes)!\n", desc, size);
+        return STATUS_INVALID_PARAMETERS;
+    }
+
     printf("Starting download of 0x%" PRIx32 " bytes for %s\n", (u32)size, desc);
 
     if (packet_length == 0)
@@ -75,26 +80,31 @@ int download_data(com_channel_struct* channel, u8** dst, u64 size, const char* d
     }
 
     while (total_received < size) {
-        ack_length = 4;
-        channel->read((u8*)&ack, &ack_length);
+        if (channel->read((u8*)&ack, &ack_length) != 0) {
+            printf("Failed to read %s ack!\n", desc);
+            return STATUS_DOWNLOAD_ACK_NOT_OK;
+        }
+
         if (ack != 0) {
             printf("Host cancelled %s data transfer!\n", desc);
             return STATUS_DOWNLOAD_ACK_NOT_OK;
         }
 
-        ack_length = 4;
-        channel->read((u8*)&checksum, &ack_length);
-        // TODO: Verify the checksum
+        if (channel->read((u8*)&checksum, &ack_length) != 0) {
+            printf("Failed to read %s checksum!\n", desc);
+            return STATUS_DOWNLOAD_ACK_NOT_OK;
+        }
 
         u32 to_receive = size - total_received;
         to_receive = to_receive > packet_length ? packet_length : to_receive;
         int status = channel->read((u8*)(*dst + total_received), &to_receive);
+
+        channel->write((u8*)&status, 4);
+
         if (status != 0) {
             printf("Failed to read %s data packet!\n", desc);
             return status;
         }
-
-        channel->write((u8*)&ack, 4);
 
         total_received += to_receive;
         xfered += to_receive;
@@ -114,6 +124,11 @@ int upload_data(com_channel_struct* channel, const u8* src, u64 size, const char
     u64 total_sent = 0;
     u32 to_read = 4;
 
+    if (size == 0) {
+        printf("Length of %s upload is invalid (%d bytes)!\n", desc, size);
+        return STATUS_INVALID_PARAMETERS;
+    }
+
     printf("Starting upload of 0x%" PRIx32 " bytes for %s\n", (u32)size, desc);
 
     while (total_sent < size) {
@@ -124,14 +139,16 @@ int upload_data(com_channel_struct* channel, const u8* src, u64 size, const char
             return status;
         }
 
-        to_read = 4;
-        channel->read((u8*)&status, &to_read);
+        u32 ack = 0;
+        int ack_status = channel->read((u8*)&ack, &to_read);
+
+        status = (ack_status != 0 || ack != 0) ? STATUS_UPLOAD_ACK_NOT_OK : 0;
+        channel->write((u8*)&status, 4);
+
         if (status != 0) {
             printf("Host cancelled %s data transfer!\n", desc);
-            return STATUS_UPLOAD_ACK_NOT_OK;
+            return status;
         }
-
-        channel->write((u8*)&status, 4);
 
         total_sent += to_send;
     }
@@ -146,7 +163,14 @@ int download_data_stream(com_channel_struct* channel, u64 size, u32 chunk_size, 
     u32 ack = 0;
     u32 ack_length = 4;
     u32 checksum = 0;
+    u32 zero = 0;
     int status = 0;
+
+    if (size == 0) {
+        printf("Length of %s download is invalid (%d bytes)!\n", desc, size);
+        channel->write((u8*)&zero, 4);
+        return 0;
+    }
 
     if (chunk_size == 0) chunk_size = g_da_ctx.write_packet_size;
     if (chunk_size == 0) chunk_size = 0x10000;
@@ -158,42 +182,68 @@ int download_data_stream(com_channel_struct* channel, u64 size, u32 chunk_size, 
     printf("Starting stream download of 0x%" PRIx32 " bytes for %s\n", (u32)size, desc);
 
     while (total_received < size) {
-        ack_length = 4;
-        channel->read((u8*)&ack, &ack_length);
+        status = channel->read((u8*)&ack, &ack_length);
+        if (status != 0) {
+            printf("Failed to read %s ack!\n", desc);
+            status = STATUS_DOWNLOAD_ACK_NOT_OK;
+            goto out;
+        }
+
         if (ack != 0) {
             printf("Host cancelled %s data transfer!\n", desc);
             status = STATUS_DOWNLOAD_ACK_NOT_OK;
             goto out;
         }
 
-        ack_length = 4;
-        channel->read((u8*)&checksum, &ack_length);
+        status = channel->read((u8*)&checksum, &ack_length);
+        if (status != 0) {
+            printf("Failed to read %s checksum!\n", desc);
+            status = STATUS_DOWNLOAD_ACK_NOT_OK;
+            goto out;
+        }
+
         u32 to_receive = (size - total_received) > chunk_size ? chunk_size : (size - total_received);
         u32 chunk_received = 0;
+        int chunk_status = 0;
 
         while (chunk_received < to_receive) {
             u32 read_len = to_receive - chunk_received;
             status = channel->read(buf, &read_len);
             if (status != 0) {
                 printf("Failed to read %s data packet!\n", desc);
-                goto out;
+                chunk_status = status;
+                break;
             }
 
-            if (cb) {
-                status = cb(total_received + chunk_received, buf, read_len, ctx);
-                if (status != 0) goto out;
+            if (read_len == 0) {
+                printf("Empty %s data packet, aborting!\n", desc);
+                chunk_status = STATUS_DOWNLOAD_ACK_NOT_OK;
+                break;
+            }
+
+            if (cb && chunk_status == 0) {
+                int cb_status = cb(total_received + chunk_received, buf, read_len, ctx);
+                if (cb_status != 0) {
+                    printf("%s callback failed with status %d\n", desc, cb_status);
+                    chunk_status = cb_status;
+                }
             }
 
             chunk_received += read_len;
         }
 
-        channel->write((u8*)&ack, 4);
+        channel->write((u8*)&chunk_status, 4);
+
+        if (chunk_status != 0) {
+            status = chunk_status;
+            goto out;
+        }
 
         total_received += to_receive;
     }
 
-    // STATUS_OK
-    channel->write((u8*)&ack, 4);
+    channel->write((u8*)&zero, 4);
+    status = 0;
 
 out:
     free(buf);
@@ -203,7 +253,13 @@ out:
 int upload_data_stream(com_channel_struct* channel, u64 size, u32 chunk_size, data_stream_cb cb, void *ctx, const char* desc) {
     u64 total_sent = 0;
     u32 to_read = 4;
+    u32 zero = 0;
     int status = 0;
+
+    if (size == 0) {
+        printf("Length of %s upload is invalid (%d bytes)!\n", desc, size);
+        return STATUS_INVALID_PARAMETERS;
+    }
 
     if (chunk_size == 0) chunk_size = g_da_ctx.read_packet_size;
     if (chunk_size == 0) chunk_size = 0x10000;
@@ -219,8 +275,14 @@ int upload_data_stream(com_channel_struct* channel, u64 size, u32 chunk_size, da
 
         if (cb) {
             status = cb(total_sent, buf, to_send, ctx);
-            if (status != 0) goto out;
+            if (status != 0) {
+                printf("%s callback failed with status %d\n", desc, status);
+                channel->write((u8*)&status, 4);
+                goto out;
+            }
         }
+
+        channel->write((u8*)&zero, 4);
 
         status = channel->write(buf, to_send);
         if (status != 0) {
@@ -229,17 +291,19 @@ int upload_data_stream(com_channel_struct* channel, u64 size, u32 chunk_size, da
         }
 
         u32 ack = 0;
-        to_read = 4;
         status = channel->read((u8*)&ack, &to_read);
         if (status != 0 || ack != 0) {
-            printf("Host cancelled %s data transfer!\n", desc);
             status = STATUS_UPLOAD_ACK_NOT_OK;
+            channel->write((u8*)&status, 4);
+            printf("Host cancelled %s data transfer!\n", desc);
             goto out;
         }
-        channel->write((u8*)&ack, 4);
 
         total_sent += to_send;
     }
+
+    channel->write((u8*)&zero, 4);
+    status = 0;
 
 out:
     free(buf);
