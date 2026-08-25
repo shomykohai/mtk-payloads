@@ -30,7 +30,7 @@ int cmd_ack(com_channel_struct *channel) {
 int cmd_setup_da_ctx(com_channel_struct *channel) {
     printf("\n\n*** Enter %s cmd ***\n\n", __func__);
 
-    da_ctx_t da_ctx;
+    da_ctx_t da_ctx = {0};
     u32 size = sizeof(da_ctx);
     int status = 0;
 
@@ -77,11 +77,17 @@ int cmd_readmem(com_channel_struct *channel) {
     u32 range_size = sizeof(range);
 
     status = channel->read((u8*)&range, &range_size);
-    channel->write((u8*)&status, 4);
     if (status != 0) {
         printf("Failed to read memory range!\n");
         return status;
     }
+
+    if (range.length == 0) {
+        printf("Memory read length is invalid (%d bytes)!\n", range.length);
+        return STATUS_INVALID_PARAMETERS;
+    }
+
+    channel->write((u8*)&status, 4);
 
     printf("Reading memory: address=0x%08" PRIx32 " length=0x%" PRIx32 "\n", range.start, range.length);
 
@@ -100,11 +106,12 @@ int cmd_writemem(com_channel_struct *channel) {
     u32 range_size = sizeof(range);
 
     status = channel->read((u8*)&range, &range_size);
-    channel->write((u8*)&status, 4);
     if (status != 0) {
         printf("Failed to read memory range!\n");
         return status;
     }
+
+    channel->write((u8*)&status, 4);
 
     printf("Writing memory: address=0x%08" PRIx32 " length=0x%" PRIx32 "\n", range.start, range.length);
 
@@ -123,6 +130,11 @@ int cmd_readregister(com_channel_struct *channel) {
     u32 value = 0;
 
     status = channel->read((u8*)&reg_addr, &size);
+    if (status != 0) {
+        printf("Failed to read register address!\n");
+        return status;
+    }
+
     channel->write((u8*)&status, 4);
 
     reg_addr &= ~0x3;
@@ -143,7 +155,16 @@ int cmd_writeregister(com_channel_struct *channel) {
     u32 size = 4;
 
     status = channel->read((u8*)&reg_addr, &size);
+    if (status != 0) {
+        printf("Failed to read register address!\n");
+        return status;
+    }
+
     status = channel->read((u8*)&reg_value, &size);
+    if (status != 0) {
+        printf("Failed to read register value!\n");
+        return status;
+    }
 
     reg_addr &= ~0x3;
 
@@ -162,63 +183,83 @@ int cmd_key_derive(com_channel_struct *channel) {
     u8 key[32] __attribute__((aligned(16))) = {0};
     u32 key_length = 0x20;
     int key_type = 0;
+    u8 label[32] = {0};
+    u8 salt[32] = {0};
+    u32 label_len = 0;
+    u32 salt_len = 0;
 
     status = channel->read((u8*)&key_type, &length);
-    if (status != 0) return status;
+    if (status != 0) {
+        printf("Failed to read key type!\n");
+        return status;
+    }
 
     status = channel->read((u8*)&key_length, &length);
-    if (status != 0) return status;
-
-    if (key_length > sizeof(key) || (key_length != 0x10 && key_length != 0x20 && key_length != 0x18)) {
-        printf("%s: Invalid key output length 0x%" PRIx32 "\n", __func__, key_length);
-        status = STATUS_INVALID_KEY_LENGTH;
-        channel->write((u8*)&status, length);
+    if (status != 0) {
+        printf("Failed to read key length!\n");
         return status;
     }
 
     if (key_type == INPUT_KEY) {
-        u8 label[32] = {0};
-        u8 salt[32] = {0};
-        u32 label_len = 0;
-        u32 salt_len = 0;
-
         status = channel->read((u8*)&label_len, &length);
+        if (status != 0) {
+            printf("Failed to read label length!\n");
+            return status;
+        }
+
         status = channel->read((u8*)&salt_len, &length);
+        if (status != 0) {
+            printf("Failed to read salt length!\n");
+            return status;
+        }
 
         if (label_len > sizeof(label) || salt_len > sizeof(salt)) {
             printf("%s: label_len (%" PRIu32 ") or salt_len (%" PRIu32 ") exceeds max 32\n",
                    __func__, label_len, salt_len);
-            status = STATUS_INVALID_KEY_SOURCE;
-            channel->write((u8*)&status, length);
-            return status;
+            return STATUS_INVALID_KEY_SOURCE;
         }
 
         status = channel->read(label, &label_len);
-        status = channel->read(salt, &salt_len);
-
-        channel->write((u8*)&status, length);
-
-        status = key_derive_input(label, label_len, salt, salt_len, key, key_length);
-        if (status == 0) {
-            channel->write(key, key_length);
+        if (status != 0) {
+            printf("Failed to read label!\n");
+            return status;
         }
-        return status;
+
+        status = channel->read(salt, &salt_len);
+        if (status != 0) {
+            printf("Failed to read salt!\n");
+            return status;
+        }
     }
 
-    channel->write((u8*)&status, length);
-
-    printf("Deriving key of type %d\n", key_type);
-    status = (int)key_derive(key_type, key, key_length);
-
-    if (status == 0) {
-        channel->write(key, key_length);
+    if (key_length > sizeof(key) || (key_length != 0x10 && key_length != 0x20 && key_length != 0x18)) {
+        printf("%s: Invalid key output length 0x%" PRIx32 "\n", __func__, key_length);
+        return STATUS_INVALID_KEY_LENGTH;
     }
+
+    status = STATUS_OK;
+    channel->write((u8*)&status, 4);
+
+    if (key_type == INPUT_KEY) {
+        printf("Deriving key from input material\n");
+        status = key_derive_input(label, label_len, salt, salt_len, key, key_length);
+    } else {
+        printf("Deriving key of type %d\n", key_type);
+        status = (int)key_derive(key_type, key, key_length);
+    }
+
+    if (status != 0) {
+        printf("Key derivation failed with status %d\n", status);
+        memset(key, 0, sizeof(key));
+    }
+
+    channel->write(key, key_length);
 
     return status;
 }
 
 int cmd_sej_aes(com_channel_struct *channel) {
-    // 64MB because V5 da heap is small
+    // 4 MB because the V5 DA heap is small
     #define AES_MAX_LEN 0x400000
     printf("\n\n*** Enter %s cmd ***\n\n", __func__);
 
@@ -229,31 +270,43 @@ int cmd_sej_aes(com_channel_struct *channel) {
     u8* data_buf = NULL;
 
     u32 param_len = sizeof(sej_param_t);
-    channel->read((u8*)&params, &param_len);
-    channel->write((u8*)&status, 4);
-
-    if (params.length > 0xFFFF) {
-        status = STATUS_SEJ_EXCEED_MAX_LEN;
+    status = channel->read((u8*)&params, &param_len);
+    if (status != 0) {
+        printf("Failed to read SEJ parameters!\n");
         return status;
     }
+
+    if (params.length > AES_MAX_LEN) {
+        return STATUS_SEJ_EXCEED_MAX_LEN;
+    }
+
+    if (params.length == 0) {
+        printf("SEJ AES length is invalid (%d bytes)!\n", params.length);
+        return STATUS_INVALID_PARAMETERS;
+    }
+
+    data_buf = (u8*)malloc(params.length + 4);
+    if (data_buf == NULL) {
+        printf("Failed to allocate 0x%" PRIx32 " bytes for SEJ AES data\n", params.length);
+        return STATUS_MALLOC_FAILED;
+    }
+    memset(data_buf, 0, params.length + 4);
+
+    channel->write((u8*)&status, 4);
 
     printf("SEJ AES: encrypt=%d xor=%d key_id=%d legacy=%d anti_clone=%d mode=%d length=0x%" PRIx32 "\n",
             params.encrypt, params.xor_en, params.key_id, params.legacy, params.anti_clone, params.mode, params.length);
 
     status = download_data(channel, &data_buf, params.length, "SEJ AES Data");
-    if (status != 0) {
-        if (status == STATUS_MALLOC_FAILED)
-            return status;
-
+    if (status != 0)
         goto out;
-    }
 
     if (params.encrypt)
         sp_sej_enc(data_buf, data_buf, params);
     else
         sp_sej_dec(data_buf, data_buf, params);
 
-    upload_data(channel, data_buf, params.length, "SEJ AES Result");
+    status = upload_data(channel, data_buf, params.length, "SEJ AES Result");
 
 out:
     free(data_buf);
@@ -267,10 +320,20 @@ int cmd_rpmb_init(com_channel_struct *channel) {
     u32 size = 0x20;
     u32 status_len = 4;
     u32 rpmb_part = 0;
+    u32 ack = STATUS_OK;
     u8 rpmbkey[0x20];
 
-    channel->read((u8*)&rpmb_part, &status_len);
-    channel->read((u8*)rpmbkey, &size);
+    status = channel->read((u8*)&rpmb_part, &status_len);
+    if (status != 0) {
+        printf("Failed to read RPMB partition!\n");
+        return status;
+    }
+
+    status = channel->read((u8*)rpmbkey, &size);
+    if (status != 0) {
+        printf("Failed to read RPMB key!\n");
+        return status;
+    }
 
     if (g_da_ctx.storage == STORAGE_UNKNOWN) {
         printf("Storage type unknown, cannot initialize RPMB!\n");
@@ -291,7 +354,7 @@ int cmd_rpmb_init(com_channel_struct *channel) {
         status = STATUS_RPMB_KEY_INVALID;
 
 out:
-    channel->write((u8*)&status, status_len);
+    channel->write((u8*)&ack, 4);
     return status;
 }
 
@@ -305,25 +368,33 @@ int cmd_rpmb_read(com_channel_struct *channel) {
     u32 sector_sz = sizeof(sector);
 
     status = channel->read((u8*)&rpmb_part, &status_sz);
+    if (status != 0) {
+        printf("Failed to read RPMB partition!\n");
+        return status;
+    }
+
     status = channel->read((u8*)&sector, &sector_sz);
+    if (status != 0) {
+        printf("Failed to read RPMB sector range!\n");
+        return status;
+    }
+
+    u32 data_len = sector.sector_count * RPMB_DATA_SZ;
 
     if (g_da_ctx.storage == STORAGE_UNKNOWN) {
         printf("Storage type unknown, cannot read RPMB!\n");
-        status = STATUS_RPMB_STORAGE_NOT_SUPPORTED;
-        channel->write((u8*)&status, status_sz);
-        return status;
+        return STATUS_RPMB_STORAGE_NOT_SUPPORTED;
     }
 
     if (rpmb_is_initialized(rpmb_part) == false) {
         printf("RPMB partition %u not initialized!\n", rpmb_part);
-        status = STATUS_RPMB_NOT_INIT;
-        channel->write((u8*)&status, status_sz);
-        return status;
+        return STATUS_RPMB_NOT_INIT;
     }
 
-    channel->write((u8*)&status, status_sz);
-
-    u32 data_len = sector.sector_count * RPMB_DATA_SZ;
+    if (data_len == 0) {
+        printf("RPMB read length is invalid (%d bytes)!\n", data_len);
+        return STATUS_INVALID_PARAMETERS;
+    }
 
     printf("RPMB: Reading 0x%" PRIx32 " bytes from partition %u, starting at sector %u\n", data_len, rpmb_part, sector.start_sector);
 
@@ -350,25 +421,30 @@ int cmd_rpmb_write(com_channel_struct *channel) {
     u32 sector_sz = sizeof(sector);
 
     status = channel->read((u8*)&rpmb_part, &status_sz);
+    if (status != 0) {
+        printf("Failed to read RPMB partition!\n");
+        return status;
+    }
+
     status = channel->read((u8*)&sector, &sector_sz);
+    if (status != 0) {
+        printf("Failed to read RPMB sector range!\n");
+        return status;
+    }
+
+    u32 data_len = sector.sector_count * RPMB_DATA_SZ;
 
     if (g_da_ctx.storage == STORAGE_UNKNOWN) {
         printf("Storage type unknown, cannot write RPMB!\n");
-        status = STATUS_RPMB_STORAGE_NOT_SUPPORTED;
-        channel->write((u8*)&status, status_sz);
-        return status;
+        return STATUS_RPMB_STORAGE_NOT_SUPPORTED;
     }
 
     if (rpmb_is_initialized(rpmb_part) == false) {
         printf("RPMB partition %u not initialized!\n", rpmb_part);
-        status = STATUS_RPMB_NOT_INIT;
-        channel->write((u8*)&status, status_sz);
-        return status;
+        return STATUS_RPMB_NOT_INIT;
     }
 
     channel->write((u8*)&status, status_sz);
-
-    u32 data_len = sector.sector_count * RPMB_DATA_SZ;
 
     printf("RPMB: Writing 0x%" PRIx32 " bytes to partition %u, starting at sector %u\n", data_len, rpmb_part, sector.start_sector);
 
