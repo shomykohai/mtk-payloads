@@ -57,6 +57,8 @@ __attribute__ ((section(".text.main"), used)) int main(void) {
     // Banner time!!
     printf(banner);
 
+    printf("> Built at %s %s\n", __DATE__, __TIME__);
+
     printf("> Registering commands\n");
     register_device_ctrl(0xF0000,(void*)cmd_ack);
     register_device_ctrl(0xF0001,(void*)cmd_setup_da_ctx);
