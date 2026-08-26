@@ -19,6 +19,7 @@
 #define CMD_RPMB_INIT "CMD:EXT-RPMB-INIT"
 #define CMD_RPMB_READ "CMD:EXT-RPMB-READ"
 #define CMD_RPMB_WRITE "CMD:EXT-RPMB-WRITE"
+#define CMD_RPMB_INFO "CMD:EXT-RPMB-INFO"
 
 
 int cmd_ack(struct com_channel_struct *channel, const char *xml);
@@ -32,5 +33,6 @@ int cmd_sej_aes(struct com_channel_struct *channel, const char *xml);
 int cmd_rpmb_init(struct com_channel_struct *channel, const char *xml);
 int cmd_rpmb_read(struct com_channel_struct *channel, const char *xml);
 int cmd_rpmb_write(struct com_channel_struct *channel, const char *xml);
+int cmd_rpmb_info(struct com_channel_struct *channel, const char *xml);
 
 #endif //DA_XML_COMMANDS_H

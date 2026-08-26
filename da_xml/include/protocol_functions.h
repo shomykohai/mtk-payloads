@@ -25,6 +25,8 @@ typedef struct __attribute__((packed)) pointer_table_t {
     u32 ufs_get_tag;
     u32 ufs_queuecommand;
     u32 ufs_put_tag;
+    u32 da_key_derive;
+    u32 ufs_read_desc;
 } pointer_table_t;
 
 struct com_channel_struct {
@@ -61,6 +63,15 @@ extern void *(*volatile ufs_get_lu)(u32 rpmb_part);
 extern int (*volatile ufs_get_tag)(void *ufs, u32 *tag);
 extern int (*volatile ufs_queuecommand)(void *ufs, void *cmd);
 extern void (*volatile ufs_put_tag)(void *ufs, u32 tag);
+extern int (*volatile da_key_derive)(u32 key_type, u8 *out, u32 len);
+extern int (*volatile ufs_read_desc)(
+    void *ufs,
+    u32 desc_id,
+    u32 index,
+    u32 selector,
+    u8 *buffer,
+    u32 length
+);
 
 // XML
 extern char *(*volatile mxmlGetNodeText)(void* /* tree */, const char* /* path */);

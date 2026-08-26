@@ -26,6 +26,8 @@ volatile pointer_table_t PTR_TABLE = {
     .ufs_get_tag            = 0x00000000,
     .ufs_queuecommand       = 0x00000000,
     .ufs_put_tag            = 0x00000000,
+    .da_key_derive          = 0x00000000,
+    .ufs_read_desc          = 0x00000000,
 };
 
 u32 init_pointers(void) {
@@ -44,6 +46,8 @@ u32 init_pointers(void) {
     ufs_get_tag             = (void *)(uptr)PTR_TABLE.ufs_get_tag;
     ufs_queuecommand        = (void *)(uptr)PTR_TABLE.ufs_queuecommand;
     ufs_put_tag             = (void *)(uptr)PTR_TABLE.ufs_put_tag;
+    da_key_derive           = (void *)(uptr)PTR_TABLE.da_key_derive;
+    ufs_read_desc           = (void *)(uptr)PTR_TABLE.ufs_read_desc;
 
     return 0;
 }
@@ -79,6 +83,7 @@ __attribute__((section(".text.main"))) int main(void) {
     register_major_command(CMD_RPMB_INIT, ver1, (HHANDLE)cmd_rpmb_init);
     register_major_command(CMD_RPMB_READ, ver1, (HHANDLE)cmd_rpmb_read);
     register_major_command(CMD_RPMB_WRITE, ver1, (HHANDLE)cmd_rpmb_write);
+    register_major_command(CMD_RPMB_INFO, ver1, (HHANDLE)cmd_rpmb_info);
 
     printf("\nAll done! See you on the other side :)\n\n\n");
 
