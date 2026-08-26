@@ -100,8 +100,19 @@ int cmd_da_ctx(struct com_channel_struct *channel, const char* xml) {
         rpmb_mmc_setup(mmc_get_card);
     } else if (strncmp(storage, "UFS", 3) == 0) {
         printf("Storage type: UFS\n");
-        storage_type_enum = STORAGE_UFS;
-        rpmb_ufs_setup(ufs_get_lu, ufs_get_tag, ufs_queuecommand, ufs_put_tag);
+        if (rpmb_ufs_setup(
+                ufs_get_lu,
+                ufs_get_tag,
+                ufs_queuecommand,
+                ufs_put_tag,
+                ufs_read_desc
+            ) != 0) {
+            printf("Failed to set up UFS RPMB backend\n");
+            storage_type_enum = STORAGE_UNKNOWN;
+            status = STATUS_ERR;
+        } else {
+            storage_type_enum = STORAGE_UFS;
+        }
     } else {
         printf("Unsupported storage type in DA context: %s\n", storage);
         storage_type_enum = STORAGE_UNKNOWN;
@@ -252,7 +263,26 @@ int cmd_key_derive(struct com_channel_struct *channel, const char *xml) {
     }
 
 
-    status = key_derive(type, key, key_length);
+    if (da_key_derive != NULL) {
+        printf("Key Derive: using native DA helper at %p\n", da_key_derive);
+        u8 *native_key = (u8 *)malloc(key_length);
+        if (native_key == NULL) {
+            printf("Key Derive: failed to allocate native output buffer\n");
+            status = STATUS_ERR;
+            goto end;
+        }
+
+        memset(native_key, 0, key_length);
+        status = da_key_derive((u32)type, native_key, key_length);
+        if (status == STATUS_OK)
+            memcpy(key, native_key, key_length);
+
+        memset(native_key, 0, key_length);
+        free(native_key);
+    } else {
+        printf("Key Derive: native DA helper unavailable, using extension fallback\n");
+        status = key_derive(type, key, key_length);
+    }
     if (status != STATUS_OK) {
         printf("Key Derive failed with status=0x%08x\n", status);
         status = STATUS_ERR;
@@ -367,8 +397,10 @@ int cmd_rpmb_init(struct com_channel_struct *channel, const char *xml) {
         goto end;
     }
 
-    if (rpmb_is_initialized(rpmb_part)) {
-        printf("RPMB partition %u already initialized! Skipping\n", rpmb_part);
+    if (rpmb_part >= MAX_RPMB_PARTS) {
+        printf("Invalid RPMB partition %u (maximum %u)\n",
+            rpmb_part, MAX_RPMB_PARTS - 1);
+        status = STATUS_ERR;
         goto end;
     }
 
@@ -387,13 +419,61 @@ int cmd_rpmb_init(struct com_channel_struct *channel, const char *xml) {
     printf("Setting RPMB key for partition %u\n", rpmb_part);
     rpmb_set_key(rpmb_part, rpmbkey);
 
-    printf("Initializing RPMB partition %u\n", rpmb_part);
+    /*
+     * Always ask the backend to authenticate the supplied key.  The old UFS
+     * backend marked itself initialized as soon as it was ready for reads.
+     * Treating that readiness flag as proof that a key was installed skipped
+     * rpmb_set_key()/rpmb_init() entirely and made authenticated writes use
+     * the zero-filled global key.
+     *
+     * rpmb_init() only reads the write counter and verifies its MAC; it does
+     * not program the one-time RPMB key, so re-validating is safe.
+     */
+    printf("Authenticating RPMB key for partition %u\n", rpmb_part);
     if (rpmb_init(rpmb_part) < 0) {
-        printf("RPMB initialization failed\n");
+        printf("RPMB key authentication failed\n");
         status = STATUS_ERR;
+    } else {
+        printf("RPMB key authentication succeeded\n");
     }
 
 end:
+    return status;
+}
+
+int cmd_rpmb_info(struct com_channel_struct *channel, const char *xml) {
+    printf("\n\n*** Enter [%s] Cmd ***\n\n", __func__);
+
+    int status = STATUS_OK;
+    xml_parser_t tree;
+    u32 rpmb_part;
+    char info_xml[256];
+
+    XML_LOAD(tree, xml, "da/arg/partition", NULL);
+    rpmb_part = (u32)XML_ATOULL(tree, "da/arg/partition");
+
+    if (rpmb_part >= MAX_RPMB_PARTS) {
+        printf("Invalid RPMB partition %u (maximum %u)\n",
+            rpmb_part, MAX_RPMB_PARTS - 1);
+        return STATUS_ERR;
+    }
+
+    u32 sectors = rpmb_get_sector_count(rpmb_part);
+    u32 bytes = sectors * RPMB_DATA_SZ;
+    printf("RPMB Info: partition=%u sectors=%u bytes=0x%x\n", rpmb_part, sectors, bytes);
+
+    u32 len = npf_snprintf(info_xml, sizeof(info_xml),
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+        "<rpmb_info>"
+        "<partition>%u</partition>"
+        "<sector_count>%u</sector_count>"
+        "<byte_size>%u</byte_size>"
+        "</rpmb_info>",
+        (unsigned int)rpmb_part,
+        (unsigned int)sectors,
+        (unsigned int)bytes);
+
+    status = upload(channel, "rpmb_info.xml", info_xml, len, "RPMB region information");
     return status;
 }
 
@@ -418,7 +498,15 @@ int cmd_rpmb_read(struct com_channel_struct *channel, const char *xml) {
         goto end;
     }
 
-    if (rpmb_is_initialized(rpmb_part) == false) {
+    if (rpmb_part >= MAX_RPMB_PARTS) {
+        printf("Invalid RPMB partition %u (maximum %u)\n",
+            rpmb_part, MAX_RPMB_PARTS - 1);
+        status = STATUS_ERR;
+        goto end;
+    }
+
+    /* UFS authenticated reads are optional; eMMC still needs backend init. */
+    if (g_da_ctx.storage != STORAGE_UFS && rpmb_is_initialized(rpmb_part) == false) {
         printf("RPMB partition %u not initialized!\n", rpmb_part);
         status = STATUS_ERR;
         goto end;
@@ -463,8 +551,15 @@ int cmd_rpmb_write(struct com_channel_struct *channel, const char *xml) {
         goto end;
     }
 
+    if (rpmb_part >= MAX_RPMB_PARTS) {
+        printf("Invalid RPMB partition %u (maximum %u)\n",
+            rpmb_part, MAX_RPMB_PARTS - 1);
+        status = STATUS_ERR;
+        goto end;
+    }
+
     if (rpmb_is_initialized(rpmb_part) == false) {
-        printf("RPMB partition %u not initialized!\n", rpmb_part);
+        printf("RPMB partition %u has no authenticated key!\n", rpmb_part);
         status = STATUS_ERR;
         goto end;
     }

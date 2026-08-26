@@ -25,6 +25,16 @@
 #define UFS_CMD_SECURITY_IN     0x00ECA200
 #define UFS_CMD_CDB_LEN         0x0C
 
+#define UFS_DESC_UNIT           2
+#define UFS_RPMB_WLUN           0xC4
+#define UFS_RPMB_DESC_LEN       0x100
+
+#define RPMB_DESC_REGION_ENABLE 0x09
+#define RPMB_DESC_BLOCK_SIZE    0x0A
+#define RPMB_DESC_BLOCK_COUNT   0x0B
+#define RPMB_DESC_REGION0_SIZE  0x13
+#define RPMB_REGION_UNIT_BYTES  (128U * 1024U)
+
 #define RPMB_GET_WRITE_COUNTER  2
 #define RPMB_WRITE_DATA         3
 #define RPMB_READ_DATA          4
@@ -51,11 +61,15 @@ static ufs_get_lu_fn g_ufs_get_lu;
 static ufs_get_tag_fn g_ufs_get_tag;
 static ufs_queuecommand_fn g_ufs_queuecommand;
 static ufs_put_tag_fn g_ufs_put_tag;
-static bool g_rpmb_initialized[MAX_RPMB_PARTS];
+static ufs_read_desc_fn g_ufs_read_desc;
+/* UFS RPMB reads do not require a key; this tracks write authentication only. */
+static bool g_rpmb_authenticated[MAX_RPMB_PARTS];
+static uint32_t g_rpmb_sector_count[MAX_RPMB_PARTS];
 static struct rpmb_backend g_be;
 
 __attribute__((aligned(64))) static struct rpmb_frame g_frame;
 __attribute__((aligned(64))) static struct rpmb_frame g_write_frames[32];
+__attribute__((aligned(64))) static uint8_t g_rpmb_unit_desc[UFS_RPMB_DESC_LEN];
 
 static int rpmb_ufs_write_blocks(
     uint32_t part,
@@ -65,7 +79,14 @@ static int rpmb_ufs_write_blocks(
     const uint8_t *rpmb_key
 );
 
-static int ufs_rpmb_command(void *ufs, u32 tag, void *data, u32 data_len, bool write)
+static int ufs_rpmb_command(
+    uint32_t part,
+    void *ufs,
+    u32 tag,
+    void *data,
+    u32 data_len,
+    bool write
+)
 {
     struct ufs_rpmb_cmd cmd;
 
@@ -74,7 +95,8 @@ static int ufs_rpmb_command(void *ufs, u32 tag, void *data, u32 data_len, bool w
     cmd.tag = tag;
     cmd.direction = write ? UFS_CMD_DIR_OUT : UFS_CMD_DIR_IN;
     cmd.cdb_word = write ? UFS_CMD_SECURITY_OUT : UFS_CMD_SECURITY_IN;
-    cmd.one_a = 1;
+    /* SECURITY PROTOCOL SPECIFIC selects RPMB region N as N + 1. */
+    cmd.one_a = part + 1;
     cmd.flags15 = 2;
     cmd.cdb_len = UFS_CMD_CDB_LEN;
     cmd.data_len = data_len;
@@ -118,7 +140,7 @@ static int ufs_rpmb_send_frames(uint32_t part, struct rpmb_frame *frames, uint32
     }
 
     printf("[RPMB-UFS] SECURITY PROTOCOL OUT len=0x%x\n", RPMB_FRAME_SZ * frame_count);
-    res = ufs_rpmb_command(ufs, tag, frames, RPMB_FRAME_SZ * frame_count, true);
+    res = ufs_rpmb_command(part, ufs, tag, frames, RPMB_FRAME_SZ * frame_count, true);
     printf("[RPMB-UFS] SECURITY PROTOCOL OUT res=%d\n", res);
 
     printf("[RPMB-UFS] put_tag %u\n", tag);
@@ -168,14 +190,14 @@ static int ufs_rpmb_xfer(
     }
 
     printf("[RPMB-UFS] SECURITY PROTOCOL OUT len=0x%x\n", RPMB_FRAME_SZ * request_count);
-    res = ufs_rpmb_command(ufs, tag, request, RPMB_FRAME_SZ * request_count, true);
+    res = ufs_rpmb_command(part, ufs, tag, request, RPMB_FRAME_SZ * request_count, true);
     printf("[RPMB-UFS] SECURITY PROTOCOL OUT res=%d\n", res);
     if (res)
         goto out;
 
     memset(response, 0, RPMB_FRAME_SZ * response_count);
     printf("[RPMB-UFS] SECURITY PROTOCOL IN len=0x%x\n", RPMB_FRAME_SZ * response_count);
-    res = ufs_rpmb_command(ufs, tag, response, RPMB_FRAME_SZ * response_count, false);
+    res = ufs_rpmb_command(part, ufs, tag, response, RPMB_FRAME_SZ * response_count, false);
     printf("[RPMB-UFS] SECURITY PROTOCOL IN res=%d\n", res);
 
 out:
@@ -259,13 +281,13 @@ static int rpmb_ufs_init(uint32_t part, uint8_t *rpmb_key)
     if (part >= MAX_RPMB_PARTS)
         return -1;
 
-    g_rpmb_initialized[part] = false;
+    g_rpmb_authenticated[part] = false;
 
     int res = rpmb_ufs_get_write_counter(part, rpmb_key, &write_counter, true);
     if (res)
         return res;
 
-    g_rpmb_initialized[part] = true;
+    g_rpmb_authenticated[part] = true;
     return 0;
 }
 
@@ -274,7 +296,7 @@ static bool rpmb_ufs_is_initialized(uint32_t part)
     if (part >= MAX_RPMB_PARTS)
         return false;
 
-    return g_rpmb_initialized[part];
+    return g_rpmb_authenticated[part];
 }
 
 static int rpmb_ufs_read(uint32_t part, uint32_t address, uint8_t *data)
@@ -338,6 +360,11 @@ static int rpmb_ufs_write_blocks(uint32_t part, uint32_t address, uint32_t block
 
     if (!rpmb_key) {
         printf("[RPMB-UFS] write requires an RPMB key\n");
+        return -1;
+    }
+
+    if (!g_rpmb_authenticated[part]) {
+        printf("[RPMB-UFS] write refused: RPMB key was not authenticated\n");
         return -1;
     }
 
@@ -413,11 +440,115 @@ static int rpmb_ufs_program_key(uint32_t part, const uint8_t *rpmb_key)
     return -1;
 }
 
+static uint64_t read_be64(const uint8_t *data)
+{
+    uint64_t value = 0;
+    for (uint32_t i = 0; i < 8; i++)
+        value = (value << 8) | data[i];
+    return value;
+}
+
+static void rpmb_ufs_load_region_sizes(void)
+{
+    memset(g_rpmb_sector_count, 0, sizeof(g_rpmb_sector_count));
+
+    if (!g_ufs_read_desc) {
+        printf("[RPMB-UFS] RPMB Unit Descriptor helper unavailable; region sizes unknown\n");
+        return;
+    }
+
+    void *ufs = g_ufs_get_lu(0);
+    if (!ufs) {
+        printf("[RPMB-UFS] cannot query RPMB Unit Descriptor without UFS context\n");
+        return;
+    }
+
+    memset(g_rpmb_unit_desc, 0, sizeof(g_rpmb_unit_desc));
+    int res = g_ufs_read_desc(
+        ufs,
+        UFS_DESC_UNIT,
+        UFS_RPMB_WLUN,
+        0,
+        g_rpmb_unit_desc,
+        sizeof(g_rpmb_unit_desc)
+    );
+    if (res != 0) {
+        printf("[RPMB-UFS] RPMB Unit Descriptor query failed: %d\n", res);
+        return;
+    }
+
+    if (g_rpmb_unit_desc[0] < 0x23 ||
+        g_rpmb_unit_desc[1] != UFS_DESC_UNIT ||
+        g_rpmb_unit_desc[2] != UFS_RPMB_WLUN ||
+        g_rpmb_unit_desc[3] != 1 ||
+        g_rpmb_unit_desc[8] != 0x0F) {
+        printf("[RPMB-UFS] invalid RPMB Unit Descriptor: len=%u type=0x%02x index=0x%02x enable=%u mem=0x%02x\n",
+            g_rpmb_unit_desc[0],
+            g_rpmb_unit_desc[1],
+            g_rpmb_unit_desc[2],
+            g_rpmb_unit_desc[3],
+            g_rpmb_unit_desc[8]);
+        return;
+    }
+
+    printf("[RPMB-UFS] RPMB Unit Descriptor: index=0x%02x region_enable=0x%02x block_size=%u\n",
+        g_rpmb_unit_desc[2],
+        g_rpmb_unit_desc[RPMB_DESC_REGION_ENABLE],
+        g_rpmb_unit_desc[RPMB_DESC_BLOCK_SIZE]);
+
+    uint64_t logical_blocks = read_be64(&g_rpmb_unit_desc[RPMB_DESC_BLOCK_COUNT]);
+    uint32_t region_units_total = 0;
+    for (uint32_t part = 0; part < MAX_RPMB_PARTS; part++) {
+        uint32_t units = g_rpmb_unit_desc[RPMB_DESC_REGION0_SIZE + part];
+        bool enabled = part == 0 || (g_rpmb_unit_desc[RPMB_DESC_REGION_ENABLE] & (1U << part));
+        if (!enabled)
+            units = 0;
+        uint32_t sectors = units * (RPMB_REGION_UNIT_BYTES / RPMB_DATA_SZ);
+        if (sectors <= 0x10000) {
+            g_rpmb_sector_count[part] = sectors;
+            region_units_total += units;
+        }
+    }
+
+    if (region_units_total != 0) {
+        if (g_rpmb_unit_desc[RPMB_DESC_BLOCK_SIZE] != 8 ||
+            (uint64_t)region_units_total * (RPMB_REGION_UNIT_BYTES / RPMB_DATA_SZ) != logical_blocks) {
+            printf("[RPMB-UFS] inconsistent advanced RPMB capacity: block_size=%u logical_blocks=%llu region_units=%u\n",
+                g_rpmb_unit_desc[RPMB_DESC_BLOCK_SIZE], logical_blocks, region_units_total);
+            memset(g_rpmb_sector_count, 0, sizeof(g_rpmb_sector_count));
+            return;
+        }
+    } else {
+        /* UFS 2.2 and older expose only qLogicalBlockCount/bLogicalBlockSize. */
+        uint32_t block_shift = g_rpmb_unit_desc[RPMB_DESC_BLOCK_SIZE];
+        if (block_shift < 32 && logical_blocks <= (UINT64_MAX >> block_shift)) {
+            uint64_t bytes = logical_blocks << block_shift;
+            uint64_t sectors = bytes / RPMB_DATA_SZ;
+            if (bytes % RPMB_DATA_SZ == 0 && sectors <= 0x10000)
+                g_rpmb_sector_count[0] = (uint32_t)sectors;
+        }
+    }
+
+    for (uint32_t part = 0; part < MAX_RPMB_PARTS; part++)
+        printf("[RPMB-UFS] region %u sector_count=%u byte_size=0x%x\n",
+            part,
+            g_rpmb_sector_count[part],
+            g_rpmb_sector_count[part] * RPMB_DATA_SZ);
+}
+
+static uint32_t rpmb_ufs_get_sector_count(uint32_t part)
+{
+    if (part >= MAX_RPMB_PARTS)
+        return 0;
+    return g_rpmb_sector_count[part];
+}
+
 int rpmb_ufs_setup(
     ufs_get_lu_fn get_lu,
     ufs_get_tag_fn get_tag,
     ufs_queuecommand_fn queuecommand,
-    ufs_put_tag_fn put_tag
+    ufs_put_tag_fn put_tag,
+    ufs_read_desc_fn read_desc
 )
 {
     if (!get_lu || !get_tag || !queuecommand || !put_tag) {
@@ -429,9 +560,10 @@ int rpmb_ufs_setup(
     g_ufs_get_tag = get_tag;
     g_ufs_queuecommand = queuecommand;
     g_ufs_put_tag = put_tag;
+    g_ufs_read_desc = read_desc;
 
     for (u32 i = 0; i < MAX_RPMB_PARTS; i++)
-        g_rpmb_initialized[i] = true;
+        g_rpmb_authenticated[i] = false;
 
     g_be.init = rpmb_ufs_init;
     g_be.is_initialized = rpmb_ufs_is_initialized;
@@ -440,7 +572,10 @@ int rpmb_ufs_setup(
     g_be.write_frame = rpmb_ufs_write;
     g_be.write_blocks = rpmb_ufs_write_blocks;
     g_be.program_key = rpmb_ufs_program_key;
+    g_be.get_sector_count = rpmb_ufs_get_sector_count;
     rpmb_set_backend(&g_be);
+
+    rpmb_ufs_load_region_sizes();
 
     printf("[RPMB-UFS] backend setup complete\n");
     return 0;
