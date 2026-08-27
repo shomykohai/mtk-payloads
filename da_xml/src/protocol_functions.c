@@ -30,6 +30,19 @@ char *(*volatile mxmlGetNodeText)(void*, const char*);
 void *(*volatile mxmlLoadString)(void*, const char*, void*);
 
 void *(*volatile mmc_get_card)(int card_id);
+void *(*volatile ufs_get_lu)(u32 rpmb_part);
+int (*volatile ufs_get_tag)(void *ufs, u32 *tag);
+int (*volatile ufs_queuecommand)(void *ufs, void *cmd);
+void (*volatile ufs_put_tag)(void *ufs, u32 tag);
+int (*volatile da_key_derive)(u32 key_type, u8 *out, u32 len);
+int (*volatile ufs_read_desc)(
+    void *ufs,
+    u32 desc_id,
+    u32 index,
+    u32 selector,
+    u8 *buffer,
+    u32 length
+);
 
 static void da_log_flush(void) {
     if (da_log_pos == 0 || global_channel == NULL)

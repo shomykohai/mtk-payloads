@@ -7,6 +7,7 @@
 #include <libc.h>
 #include <crypto/tzcc.h>
 #include <crypto/key_derive.h>
+#include <debug.h>
 
 static uintptr_t tzcc_base = 0;
 
@@ -25,13 +26,21 @@ int tzcc_key_derive(const uint8_t *label, uint32_t label_len,
     if (tzcc_base == 0)
         return -1;
 
-    SBROM_ClockEnable();
+    printf("[TZCC] key derive start: base=0x%08x label_len=%u ctx_len=%u out_len=%u\n",
+        (uint32_t)tzcc_base, label_len, ctx_len, out_len);
 
+    printf("[TZCC] enabling SBROM clock\n");
+    SBROM_ClockEnable();
+    printf("[TZCC] SBROM clock enabled\n");
+
+    printf("[TZCC] calling SBROM KDF\n");
     int status = SBROM_KeyDerivation(tzcc_base, ROOT_KEY,
                                      label, label_len,
                                      ctx, ctx_len,
                                      out, out_len);
+    printf("[TZCC] SBROM KDF returned 0x%08x\n", status);
 
     SBROM_ClockDisable();
+    printf("[TZCC] key derive status=0x%08x\n", status);
     return status;
 }

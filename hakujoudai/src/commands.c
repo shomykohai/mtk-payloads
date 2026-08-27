@@ -9,6 +9,7 @@
 #include <heap.h>
 #include <commands.h>
 #include <debug.h>
+#include <mmio.h>
 
 #define STATUS_OK   0x00000000
 #define STATUS_ERR  0xC0010001
@@ -122,6 +123,9 @@ int cmd_patch_mem(struct com_channel_struct *channel, const char *xml)
         printf("%s: download failed: 0x%lx\n", __func__, (unsigned long)status);
         return status;
     }
+
+    /* Make downloaded code/data visible before the DA executes it. */
+    invalidate_icache_range((uptr)addr, size);
 
     return STATUS_OK;
 }
