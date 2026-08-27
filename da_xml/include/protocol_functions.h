@@ -21,6 +21,10 @@ typedef struct __attribute__((packed)) pointer_table_t {
     u32 malloc;
     u32 free;
     u32 mmc_get_card;
+    u32 ufs_get_lu;
+    u32 ufs_get_tag;
+    u32 ufs_queuecommand;
+    u32 ufs_put_tag;
 } pointer_table_t;
 
 struct com_channel_struct {
@@ -53,6 +57,10 @@ extern void (*volatile free)(void *ptr);
 
 // Storage
 extern void *(*volatile mmc_get_card)(int card_id);
+extern void *(*volatile ufs_get_lu)(u32 rpmb_part);
+extern int (*volatile ufs_get_tag)(void *ufs, u32 *tag);
+extern int (*volatile ufs_queuecommand)(void *ufs, void *cmd);
+extern void (*volatile ufs_put_tag)(void *ufs, u32 tag);
 
 // XML
 extern char *(*volatile mxmlGetNodeText)(void* /* tree */, const char* /* path */);

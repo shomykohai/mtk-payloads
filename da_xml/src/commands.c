@@ -14,6 +14,7 @@
 #include <crypto/key_derive.h>
 #include <security/rpmb.h>
 #include <storage/mmc/rpmb_mmc.h>
+#include <storage/ufs/rpmb_ufs.h>
 #include <da.h>
 #include <protocol_functions.h>
 #include <commands.h>
@@ -125,9 +126,14 @@ int cmd_da_ctx(struct com_channel_struct *channel, const char* xml) {
     printf("TZCC base: 0x%08" PRIx32 "\n", tzcc_base);
 
     storage_type storage_type_enum;
-    if (strncmp(storage, "EMMC", 4) == 0) {   printf("Storage type: eMMC\n");
+    if (strncmp(storage, "EMMC", 4) == 0) {
+        printf("Storage type: eMMC\n");
         storage_type_enum = STORAGE_EMMC;
         rpmb_mmc_setup(mmc_get_card);
+    } else if (strncmp(storage, "UFS", 3) == 0) {
+        printf("Storage type: UFS\n");
+        storage_type_enum = STORAGE_UFS;
+        rpmb_ufs_setup(ufs_get_lu, ufs_get_tag, ufs_queuecommand, ufs_put_tag);
     } else {
         printf("Unsupported storage type in DA context: %s\n", storage);
         storage_type_enum = STORAGE_UNKNOWN;
@@ -298,7 +304,6 @@ int cmd_key_derive(struct com_channel_struct *channel, const char *xml) {
     if (key_type_str != NULL && strcmp(key_type_str, "INPUT") == 0) {
         label_str = XML_TEXT(tree, "da/arg/label");
         salt_str  = XML_TEXT(tree, "da/arg/salt");
-
 
         if (label_str != NULL) {
             label_len = hex_to_bytes(label_str, label, sizeof(label));

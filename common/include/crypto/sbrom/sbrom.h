@@ -61,6 +61,7 @@ typedef struct {
 
 #define SBROM_OK            0x00000000
 #define SBROM_ERROR         0xF6000001
+#define SBROM_TIMEOUT       0xF6000002
 #define INVALID_LENGTH      0xF2000003
 
 SaSiStatus SBROM_KeyDerivation(uintptr_t hwBaseAddress,
