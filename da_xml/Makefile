@@ -35,10 +35,10 @@ CFLAGS := $(COMMON_CFLAGS) \
 LDFLAGS := $(COMMON_LDFLAGS) -lgcc
 
 CFLAGS_ARM   := $(CFLAGS) -DARM -marm -mcpu=cortex-a9 -mno-unaligned-access
-CFLAGS_ARM64 := $(CFLAGS) -DAARCH64 -march=armv8-a -mgeneral-regs-only -mno-outline-atomics -mstrict-align
+CFLAGS_ARM64 := $(CFLAGS) -DAARCH64 -march=armv8-a -mgeneral-regs-only -mno-outline-atomics -mstrict-align -fno-stack-protector -fno-lto -ffreestanding -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
 
 LDFLAGS_ARM   := $(LDFLAGS) -Tsrc/arch/arm/generic.ld
-LDFLAGS_ARM64 := $(LDFLAGS) -Tsrc/arch/arm64/generic.ld
+LDFLAGS_ARM64 := $(LDFLAGS) -no-pie -Tsrc/arch/arm64/generic.ld
 
 arm_obj   = $(patsubst %.c,$(BUILD_DIR)/arm/%.o,$(subst ../,,$(1)))
 arm64_obj = $(patsubst %.c,$(BUILD_DIR)/aarch64/%.o,$(subst ../,,$(1)))

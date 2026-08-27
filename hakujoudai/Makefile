@@ -20,6 +20,7 @@ OUT_ARM64 := ../payloads/hakujoudai_arm64
 
 CFLAGS_COMMON := $(COMMON_CFLAGS) -Os -fno-builtin -fno-strict-aliasing
 CFLAGS_COMMON += -fvisibility=hidden
+CFLAGS_COMMON += -fno-stack-protector
 CFLAGS_COMMON += -Isrc/include -Wno-main
 CFLAGS_COMMON += -DXML_STACK_SIZE=512
 
@@ -28,15 +29,15 @@ CFLAGS_COMMON += -DDEBUG
 endif
 
 CFLAGS_ARM := $(CFLAGS_COMMON)
-CFLAGS_ARM += -march=armv7-a -marm -fpic -mpic-data-is-text-relative
+CFLAGS_ARM += -march=armv7-a -marm -fpic -mpic-data-is-text-relative -fno-lto
 
 CFLAGS_ARM64 := $(CFLAGS_COMMON)
 CFLAGS_ARM64 += -march=armv8-a -mcmodel=tiny -fno-pic -fno-pie -fno-plt
 
-LDFLAGS_COMMON := $(COMMON_LDFLAGS) -nostdlib -Wl,--no-warn-rwx-segments
+LDFLAGS_COMMON := $(COMMON_LDFLAGS) -nostdlib
 
 LDFLAGS_ARM   := $(LDFLAGS_COMMON) -T src/linker32.x
-LDFLAGS_ARM64 := $(LDFLAGS_COMMON) -T src/linker64.x
+LDFLAGS_ARM64 := $(LDFLAGS_COMMON) -no-pie -T src/linker64.x
 
 LIBS_ARM   := -lgcc
 LIBS_ARM64 :=

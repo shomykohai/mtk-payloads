@@ -93,6 +93,13 @@ uint32_t rpmb_get_sector_count(uint32_t part) {
     return g_be->get_sector_count(part);
 }
 
+bool rpmb_is_region_enabled(uint32_t part) {
+    if (!g_be || !g_be->is_region_enabled || part >= MAX_RPMB_PARTS)
+        return false;
+
+    return g_be->is_region_enabled(part);
+}
+
 int rpmb_read_stream_cb(uint64_t offset, uint8_t *data, uint32_t length, void *ctx) {
     struct rpmb_stream_ctx *rctx = (struct rpmb_stream_ctx *)ctx;
     uint32_t sector_offset = (uint32_t)(offset / RPMB_DATA_SZ);

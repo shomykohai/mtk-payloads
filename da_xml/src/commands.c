@@ -56,7 +56,8 @@ static const enum_map_t key_sz_map[] = {
 };
 
 
-int cmd_ack(struct com_channel_struct *channel, const char*) {
+int cmd_ack(struct com_channel_struct *channel, const char *xml) {
+    (void)xml;
     int status = STATUS_OK;
     const char *target_file = "ack.xml";
     char ack_xml[512];
@@ -139,9 +140,8 @@ int cmd_da_ctx(struct com_channel_struct *channel, const char* xml) {
                 ufs_put_tag,
                 ufs_read_desc
             ) != 0) {
-            printf("Failed to set up UFS RPMB backend\n");
+            printf("UFS RPMB helpers unavailable; continuing without RPMB support\n");
             storage_type_enum = STORAGE_UNKNOWN;
-            status = STATUS_ERR;
         } else {
             storage_type_enum = STORAGE_UFS;
         }
@@ -531,6 +531,8 @@ end:
 int cmd_rpmb_info(struct com_channel_struct *channel, const char *xml) {
     printf("\n\n*** Enter [%s] Cmd ***\n\n", __func__);
 
+    clear_error_msg();
+
     int status = STATUS_OK;
     xml_parser_t tree;
     u32 rpmb_part;
@@ -546,17 +548,21 @@ int cmd_rpmb_info(struct com_channel_struct *channel, const char *xml) {
     }
 
     u32 sectors = rpmb_get_sector_count(rpmb_part);
+    bool enabled = rpmb_is_region_enabled(rpmb_part);
     u32 bytes = sectors * RPMB_DATA_SZ;
-    printf("RPMB Info: partition=%u sectors=%u bytes=0x%x\n", rpmb_part, sectors, bytes);
+    printf("RPMB Info: partition=%u enabled=%u sectors=%u bytes=0x%x\n",
+        rpmb_part, enabled, sectors, bytes);
 
     u32 len = npf_snprintf(info_xml, sizeof(info_xml),
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
         "<rpmb_info>"
         "<partition>%u</partition>"
+        "<enabled>%s</enabled>"
         "<sector_count>%u</sector_count>"
         "<byte_size>%u</byte_size>"
         "</rpmb_info>",
         (unsigned int)rpmb_part,
+        enabled ? "yes" : "no",
         (unsigned int)sectors,
         (unsigned int)bytes);
 

@@ -35,6 +35,7 @@ struct rpmb_backend {
     int  (*write_blocks)(uint32_t part, uint32_t address, uint32_t blocks, uint8_t *data, const uint8_t *rpmb_key);
     int  (*program_key)(uint32_t part, const uint8_t *rpmb_key);
     uint32_t (*get_sector_count)(uint32_t part);
+    bool (*is_region_enabled)(uint32_t part);
 };
 
 void rpmb_set_backend(const struct rpmb_backend *be);
@@ -49,6 +50,7 @@ int rpmb_write(uint32_t part, uint32_t address, uint8_t *data);
 int rpmb_write_blocks(uint32_t part, uint32_t address, uint32_t blocks, uint8_t *data);
 int rpmb_program_key(uint32_t part);
 uint32_t rpmb_get_sector_count(uint32_t part);
+bool rpmb_is_region_enabled(uint32_t part);
 
 struct rpmb_stream_ctx {
     uint32_t rpmb_part;

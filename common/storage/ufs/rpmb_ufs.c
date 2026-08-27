@@ -64,6 +64,7 @@ static ufs_put_tag_fn g_ufs_put_tag;
 static ufs_read_desc_fn g_ufs_read_desc;
 /* UFS RPMB reads do not require a key; this tracks write authentication only. */
 static bool g_rpmb_authenticated[MAX_RPMB_PARTS];
+static bool g_rpmb_region_enabled[MAX_RPMB_PARTS];
 static uint32_t g_rpmb_sector_count[MAX_RPMB_PARTS];
 static struct rpmb_backend g_be;
 
@@ -451,6 +452,7 @@ static uint64_t read_be64(const uint8_t *data)
 static void rpmb_ufs_load_region_sizes(void)
 {
     memset(g_rpmb_sector_count, 0, sizeof(g_rpmb_sector_count));
+    memset(g_rpmb_region_enabled, 0, sizeof(g_rpmb_region_enabled));
 
     if (!g_ufs_read_desc) {
         printf("[RPMB-UFS] RPMB Unit Descriptor helper unavailable; region sizes unknown\n");
@@ -501,8 +503,7 @@ static void rpmb_ufs_load_region_sizes(void)
     for (uint32_t part = 0; part < MAX_RPMB_PARTS; part++) {
         uint32_t units = g_rpmb_unit_desc[RPMB_DESC_REGION0_SIZE + part];
         bool enabled = part == 0 || (g_rpmb_unit_desc[RPMB_DESC_REGION_ENABLE] & (1U << part));
-        if (!enabled)
-            units = 0;
+        g_rpmb_region_enabled[part] = enabled;
         uint32_t sectors = units * (RPMB_REGION_UNIT_BYTES / RPMB_DATA_SZ);
         if (sectors <= 0x10000) {
             g_rpmb_sector_count[part] = sectors;
@@ -526,12 +527,15 @@ static void rpmb_ufs_load_region_sizes(void)
             uint64_t sectors = bytes / RPMB_DATA_SZ;
             if (bytes % RPMB_DATA_SZ == 0 && sectors <= 0x10000)
                 g_rpmb_sector_count[0] = (uint32_t)sectors;
+            if (g_rpmb_sector_count[0] != 0)
+                g_rpmb_region_enabled[0] = true;
         }
     }
 
     for (uint32_t part = 0; part < MAX_RPMB_PARTS; part++)
-        printf("[RPMB-UFS] region %u sector_count=%u byte_size=0x%x\n",
+        printf("[RPMB-UFS] region %u enabled=%u sector_count=%u byte_size=0x%x\n",
             part,
+            g_rpmb_region_enabled[part],
             g_rpmb_sector_count[part],
             g_rpmb_sector_count[part] * RPMB_DATA_SZ);
 }
@@ -541,6 +545,13 @@ static uint32_t rpmb_ufs_get_sector_count(uint32_t part)
     if (part >= MAX_RPMB_PARTS)
         return 0;
     return g_rpmb_sector_count[part];
+}
+
+static bool rpmb_ufs_is_region_enabled(uint32_t part)
+{
+    if (part >= MAX_RPMB_PARTS)
+        return false;
+    return g_rpmb_region_enabled[part];
 }
 
 int rpmb_ufs_setup(
@@ -573,6 +584,7 @@ int rpmb_ufs_setup(
     g_be.write_blocks = rpmb_ufs_write_blocks;
     g_be.program_key = rpmb_ufs_program_key;
     g_be.get_sector_count = rpmb_ufs_get_sector_count;
+    g_be.is_region_enabled = rpmb_ufs_is_region_enabled;
     rpmb_set_backend(&g_be);
 
     rpmb_ufs_load_region_sizes();
