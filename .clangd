@@ -1,3 +1,11 @@
 # yaml-language-server: $schema=https://json.schemastore.org/clangd.json
 CompileFlags:
   Add: [-xc]
+  Remove:
+    - -mpic-data-is-text-relative
+    - -mgeneral-regs-only
+    - -mcmodel=*
+    - -mno-outline-atomics
+    - -fno-outline-atomics
+    - -flto*
+    - --specs=*
