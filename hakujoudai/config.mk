@@ -1,0 +1,2 @@
+CONFIG_UART := y
+CONFIG_XML  := y

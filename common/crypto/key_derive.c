@@ -9,7 +9,7 @@
 #include <crypto/key_derive.h>
 #include <debug.h>
 
-#if defined(__aarch64__) && defined(crypto_ssr)
+#if defined(__aarch64__) && defined(CONFIG_CRYPTO_SSR)
 
 #include <crypto/ssr/ssr.h>
 
@@ -174,7 +174,7 @@ u32 key_derive_input(u8 *label, u32 label_sz, u8 *salt, u32 salt_sz, u8 *out, u3
 
     int status = tzcc_key_derive(label, label_sz, salt, salt_sz, out, len);
 
-#if defined(__aarch64__) && defined(crypto_ssr)
+#if defined(__aarch64__) && defined(CONFIG_CRYPTO_SSR)
     if (status != 0)
         status = ssr_key_derive(label, label_sz, salt, salt_sz, out, len);
 #endif

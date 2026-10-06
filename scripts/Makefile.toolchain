@@ -1,0 +1,26 @@
+TC_PREFIXES_arm ?= \
+	arm-none-eabi- \
+	arm-eabi- \
+	arm-none-linux-gnueabihf- \
+	arm-linux-gnueabihf-
+
+TC_PREFIXES_arm64 ?= \
+	aarch64-none-elf- \
+	aarch64-elf- \
+	aarch64-none-linux-gnu- \
+	aarch64-linux-gnu- \
+	aarch64-unknown-linux-gnu-
+
+TC_HINT_arm   := Debian/Ubuntu: gcc-arm-none-eabi binutils-arm-none-eabi | Arch: arm-none-eabi-gcc arm-none-eabi-binutils | Nix: nix develop
+TC_HINT_arm64 := Arch (AUR): aarch64-elf-gcc aarch64-elf-binutils | Nix: nix develop | else Arm GNU aarch64-none-elf from developer.arm.com
+
+tc_have = $(shell command -v $(1)gcc >/dev/null 2>&1 && command -v $(1)objcopy >/dev/null 2>&1 && echo yes)
+tc_find = $(firstword $(foreach p,$(1),$(if $(call tc_have,$(p)),$(p))))
+
+define tc_resolve
+$(strip $(if $(CROSS_COMPILE_$(1)),\
+  $(if $(call tc_have,$(CROSS_COMPILE_$(1))),$(CROSS_COMPILE_$(1)),\
+    $(error CROSS_COMPILE_$(1) is set to '$(CROSS_COMPILE_$(1))' but $(CROSS_COMPILE_$(1))gcc and $(CROSS_COMPILE_$(1))objcopy are not both on PATH)),\
+  $(or $(call tc_find,$(TC_PREFIXES_$(1))),\
+    $(error no $(1) cross toolchain found, tried: $(TC_PREFIXES_$(1)). Install one ($(TC_HINT_$(1))) or pass CROSS_COMPILE_$(1)=<prefix>))))
+endef

@@ -1,0 +1,160 @@
+ifeq ($(PAYLOAD),)
+$(error PAYLOAD is not set. Use the root Makefile)
+endif
+ifeq ($(ARCH),)
+$(error ARCH is not set. Use the root Makefile)
+endif
+
+ARCHES_AVAILABLE := $(patsubst arch/%/Makefile,%,$(wildcard arch/*/Makefile))
+ifeq ($(filter $(ARCH),$(ARCHES_AVAILABLE)),)
+$(error unknown ARCH '$(ARCH)'. Available: $(ARCHES_AVAILABLE))
+endif
+
+ROOT   := $(CURDIR)
+OBJDIR := out/$(PAYLOAD)/$(ARCH)
+Q      := $(if $(V),,@)
+
+# payload name
+name      := $(PAYLOAD)
+# such as _arm, _arm64 or anything
+binsuffix :=
+# default opt level for src files
+opt       := -O2
+# linker script
+ldscript  :=
+# includes
+incdirs   := -I$(PAYLOAD)/include
+# src files
+srcs-y    :=
+cflags-y  :=
+ldflags-y :=
+
+lto         := y
+# useless stuff
+gc_sections := n
+
+ldcflags    := y
+
+# NIX!
+SOURCE_DATE_EPOCH := $(shell git log -1 --format=%ct 2>/dev/null || echo 315532800)
+export SOURCE_DATE_EPOCH
+
+PAYLOAD_VERSION := $(shell git describe --always --dirty 2>/dev/null || echo unknown)
+
+needs  = $(if $(filter y,$(CONFIG_$2)),,$(error CONFIG_$1 requires CONFIG_$2 = y))
+choice = $(if $(filter $(CONFIG_$1),$2),,$(error CONFIG_$1 = '$(CONFIG_$1)' invalid. Expected one of: $2))
+
+define arch_only
+$(if $(filter $(ARCH),$(2)),,$(eval override CONFIG_$(1) := n))
+endef
+
+include scripts/Makefile.toolchain
+include arch/$(ARCH)/Makefile
+include $(PAYLOAD)/config.mk
+include common/Makefile
+include $(PAYLOAD)/payload.mk
+
+CC      := $(CROSS_COMPILE)gcc
+OBJCOPY := $(CROSS_COMPILE)objcopy
+SIZE    := $(CROSS_COMPILE)size
+
+ifeq ($(ldscript),)
+$(error $(PAYLOAD)/payload.mk must set ldscript)
+endif
+
+optflags   :=
+ldoptflags :=
+
+ifeq ($(lto),y)
+optflags += -flto
+endif
+
+ifeq ($(gc_sections),y)
+optflags   += -ffunction-sections -fdata-sections
+ldoptflags += -Wl,--gc-sections
+endif
+
+CFLAGS := -std=gnu99 -Wall -Wextra \
+          -fno-strict-aliasing -fno-builtin \
+          -fno-omit-frame-pointer -fno-pic -fno-pie \
+          -MMD -MP \
+          -Icommon/include $(incdirs) \
+          -include $(OBJDIR)/autoconf.h \
+          $(optflags) $(opt) $(archflags) $(cflags-y)
+
+ifeq ($(asflags_full),y)
+ASFLAGS := $(CFLAGS)
+else
+asflags ?= $(archflags)
+ASFLAGS := $(asflags) -Icommon/include $(incdirs)
+endif
+
+LDFLAGS := -nodefaultlibs -nostdlib \
+           -Wl,--build-id=none,--no-warn-rwx-segments \
+           $(ldoptflags) -T $(ldscript) $(ldflags-y)
+
+objs := $(patsubst %,$(OBJDIR)/%.o,$(srcs-y))
+elf  := $(OBJDIR)/$(name)$(binsuffix).elf
+bin  := $(OUTPUT_DIR)/$(name)$(binsuffix).bin
+
+ifeq ($(OUTPUT_DIR),)
+$(error OUTPUT_DIR is not set; use the root Makefile)
+endif
+
+from_file = $(filter file override command,$(firstword $(origin $1)))
+pairs := $(foreach c,$(sort $(filter CONFIG_%,$(.VARIABLES))),$(if $(call from_file,$c),$c=$($c)))
+
+sysinc = $(shell $(CC) -E -Wp,-v -xc /dev/null 2>&1 \
+           | sed -n '/search starts here/,/End of search list/p' \
+           | sed -n 's|^ |-isystem |p')
+
+.PHONY: all cdb FORCE
+all: $(bin)
+
+$(bin): $(elf)
+	@mkdir -p $(@D)
+	$(Q)$(OBJCOPY) -O binary $< $@
+	$(Q)$(SIZE) $<
+	@echo "  BIN     $@"
+
+$(elf): $(objs) $(ldscript) $(OBJDIR)/flags.stamp
+	@echo "  LD      $@"
+	$(Q)$(CC) $(if $(filter n,$(ldcflags)),,$(CFLAGS)) $(objs) -o $@ $(LDFLAGS)
+
+$(OBJDIR)/%.c.o: %.c $(OBJDIR)/autoconf.h $(OBJDIR)/flags.stamp
+	@mkdir -p $(@D)
+	@echo "  CC      $<$(if $(cflags-$<), [$(cflags-$<)])"
+	$(Q)$(CC) $(CFLAGS) $(cflags-$<) -c $< -o $@
+
+$(OBJDIR)/%.S.o: %.S $(OBJDIR)/autoconf.h $(OBJDIR)/flags.stamp
+	@mkdir -p $(@D)
+	@echo "  AS      $<"
+	$(Q)$(CC) $(ASFLAGS) -c $< -o $@
+
+$(OBJDIR)/%.c.o.json: %.c $(OBJDIR)/autoconf.h $(OBJDIR)/flags.stamp
+	@mkdir -p $(@D)
+	$(Q)printf '{"directory":"%s","file":"%s","output":"%s","command":"%s"},\n' \
+	  '$(ROOT)' '$(ROOT)/$<' '$(ROOT)/$(@:.o.json=.o)' \
+	  '$(CC) $(CFLAGS) $(cflags-$<) $(sysinc) -c $< -o $(@:.o.json=.o)' > $@
+
+cdb: $(patsubst %,$(OBJDIR)/%.o.json,$(filter %.c,$(srcs-y)))
+	$(Q)cat $^ > $(OBJDIR)/cdb.frag
+
+# How to make a build system similar to KConfig but without KConfig, Or: How I decide to complicate my life for no reason (A Mr. Fregoli reference)
+$(OBJDIR)/autoconf.h: FORCE
+	@mkdir -p $(@D)
+	$(Q)for kv in $(pairs); do k=$${kv%%=*}; v=$${kv#*=}; case "$$v" in \
+	      y) echo "#define $$k 1" ;; n|"") ;; \
+	      *) echo "#define $${k}_$$(echo "$$v" | tr 'a-z-' 'A-Z_') 1"; \
+	         echo "#define $${k}_STR \"$$v\"" ;; esac; done > $@.tmp
+	$(Q)echo '#define PAYLOAD_VERSION "$(PAYLOAD_VERSION)"' >> $@.tmp
+	$(Q)cmp -s $@.tmp $@ || mv -f $@.tmp $@
+	$(Q)rm -f $@.tmp
+
+$(OBJDIR)/flags.stamp: FORCE
+	@mkdir -p $(@D)
+	$(Q)echo '$(CC)|$(CFLAGS)|$(ASFLAGS)|$(LDFLAGS)|$(ldcflags)' > $@.tmp
+	$(Q)cmp -s $@.tmp $@ || mv -f $@.tmp $@
+	$(Q)rm -f $@.tmp
+
+-include $(objs:.o=.d)

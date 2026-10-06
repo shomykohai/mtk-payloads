@@ -1,0 +1,10 @@
+CONFIG_UART        := y
+
+CONFIG_CRYPTO      := y
+CONFIG_CRYPTO_TZCC := y
+CONFIG_CRYPTO_KDF  := y
+CONFIG_CRYPTO_SEJ  := y
+
+CONFIG_MMC         := y
+CONFIG_RPMB        := y
+CONFIG_MMC_RPMB    := y

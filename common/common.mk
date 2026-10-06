@@ -5,12 +5,15 @@
 #   include $(COMMON_DIR)/common.mk
 #
 # Available features:
-#   uart       - UART driver
-#   crypto     - TZCC, SBROM, SHA256, HMAC-SHA256...
-#   crypto_ssr - SSR key derivation, PKA, CCC (requires crypto)
-#   rpmb       - RPMB
-#   mmc        - MMC driver
-#   mmc_rpmb   - MMC RPMB driver
+#   uart        - UART driver
+#   crypto      - Base crypto: XOR, SHA256, HMAC-SHA256
+#   crypto_tzcc - TZCC key derivation, SBROM
+#   crypto_kdf  - Key derivation frontend (requires crypto_tzcc)
+#   crypto_sej  - SEJ HW AES, SGPT (requires crypto)
+#   crypto_ssr  - SSR key derivation, PKA, CCC
+#   rpmb        - RPMB
+#   mmc         - MMC driver
+#   mmc_rpmb    - MMC RPMB driver
 
 COMMON_DIR ?= ../common
 
@@ -31,11 +34,17 @@ endif
 
 CRYPTO_SRCS = \
 	$(COMMON_DIR)/crypto/xor.c \
-	$(COMMON_DIR)/crypto/sbrom/sbrom.c \
-	$(COMMON_DIR)/crypto/tzcc.c \
-	$(COMMON_DIR)/crypto/key_derive.c \
 	$(COMMON_DIR)/crypto/hmac-sha256.c \
-	$(COMMON_DIR)/crypto/sha256.c \
+	$(COMMON_DIR)/crypto/sha256.c
+
+CRYPTO_TZCC_SRCS = \
+	$(COMMON_DIR)/crypto/tzcc.c \
+	$(COMMON_DIR)/crypto/sbrom/sbrom.c
+
+CRYPTO_KDF_SRCS = \
+	$(COMMON_DIR)/crypto/key_derive.c
+
+CRYPTO_SEJ_SRCS = \
 	$(COMMON_DIR)/crypto/sej/sej.c \
 	$(COMMON_DIR)/crypto/sej/sej_hk.c \
 	$(COMMON_DIR)/crypto/sej/sej_sk.c \
@@ -68,11 +77,30 @@ O3_SRCS       += \
     $(COMMON_DIR)/crypto/sha256.c
 endif
 
-ifneq ($(filter crypto_ssr,$(FEATURES)),)
-ifeq ($(filter crypto,$(FEATURES)),)
-$(error crypto_ssr requires crypto)
+ifneq ($(filter crypto_tzcc,$(FEATURES)),)
+COMMON_SRCS   += $(CRYPTO_TZCC_SRCS)
+COMMON_CFLAGS += -Dcrypto_tzcc
 endif
 
+ifneq ($(filter crypto_kdf,$(FEATURES)),)
+ifeq ($(filter crypto_tzcc,$(FEATURES)),)
+$(error crypto_kdf requires crypto_tzcc)
+endif
+
+COMMON_SRCS   += $(CRYPTO_KDF_SRCS)
+COMMON_CFLAGS += -Dcrypto_kdf
+endif
+
+ifneq ($(filter crypto_sej,$(FEATURES)),)
+ifeq ($(filter crypto,$(FEATURES)),)
+$(error crypto_sej requires crypto)
+endif
+
+COMMON_SRCS   += $(CRYPTO_SEJ_SRCS)
+COMMON_CFLAGS += -Dcrypto_sej
+endif
+
+ifneq ($(filter crypto_ssr,$(FEATURES)),)
 COMMON_SRCS   += $(CRYPTO_SSR_SRCS)
 COMMON_CFLAGS += -Dcrypto_ssr
 endif

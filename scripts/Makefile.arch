@@ -1,0 +1,8 @@
+ifeq ($(PAYLOAD),)
+$(error PAYLOAD is not set)
+endif
+
+include $(PAYLOAD)/payload.mk
+
+.PHONY: all
+all: ; @echo $(or $(strip $(arches)),arm)

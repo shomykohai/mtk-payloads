@@ -1,3 +1,4 @@
 #!/bin/sh
-make clean
+set -e
+
 make

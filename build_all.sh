@@ -6,6 +6,7 @@ DIRS=(
     extloader
     brom_defuse
     hakujoudai
+    sla_xml
 )
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
